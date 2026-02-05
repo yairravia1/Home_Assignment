@@ -1,4 +1,5 @@
 using HtmlAgilityPack;
+using System.Text.Json;
 
 namespace HomeAssignment.Infrastructure.Scraper.Providers;
 
@@ -73,6 +74,14 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
 
         var doc = LoadDocument(fullCreditsUrl);
 
+        // Rotten Tomatoes pages often render cast via embedded JSON (no plain <a href="/celebrity/..."> links in HTML).
+        // Prefer parsing Schema.org JSON-LD which includes the cast list.
+        var ldJsonActors = TryGetActorsFromLdJson(doc, count);
+        if (ldJsonActors.Count > 0)
+        {
+            return ldJsonActors;
+        }
+
         // Cast & Crew pages include both "Cast" and "Crew" entries. We want ACTORS only.
         // We start from links to "/celebrity/..." and keep only those whose nearby text includes "Actor".
         var celebrityLinks = doc.DocumentNode.SelectNodes("//a[contains(@href,'/celebrity/')]");
@@ -84,7 +93,18 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
         return celebrityLinks
             .Select(link =>
             {
-                var name = HtmlEntity.DeEntitize(link.InnerText ?? "").Trim();
+                // Some RT markup uses images/spans and has empty InnerText; fall back to attributes.
+                var name =
+                    HtmlEntity.DeEntitize(link.InnerText ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = HtmlEntity.DeEntitize(link.GetAttributeValue("aria-label", "")).Trim();
+                }
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = HtmlEntity.DeEntitize(link.GetAttributeValue("title", "")).Trim();
+                }
+
                 var href = link.GetAttributeValue("href", "").Trim();
                 var id = ExtractCelebrityId(href);
 
@@ -108,6 +128,171 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
             .Select(g => g.First()!)
             .Take(count)
             .ToList();
+    }
+
+    private static List<ActorEntry> TryGetActorsFromLdJson(HtmlDocument doc, int count)
+    {
+        try
+        {
+            var scripts = doc.DocumentNode.SelectNodes("//script[@type='application/ld+json']");
+            if (scripts == null || scripts.Count == 0)
+            {
+                return new List<ActorEntry>();
+            }
+
+            var results = new List<ActorEntry>();
+
+            foreach (var script in scripts)
+            {
+                var json = script.InnerText?.Trim();
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    continue;
+                }
+
+                using var document = JsonDocument.Parse(json);
+                foreach (var obj in EnumerateObjects(document.RootElement))
+                {
+                    // We only care about Movie objects that have an "actor" list.
+                    if (!TryGetStringProperty(obj, "@type", out var type) ||
+                        !type.Equals("Movie", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Some pages may omit @type or use arrays; if it still has "actor", accept it.
+                        if (!obj.TryGetProperty("actor", out _))
+                        {
+                            continue;
+                        }
+                    }
+
+                    if (!obj.TryGetProperty("actor", out var actorProp) || actorProp.ValueKind != JsonValueKind.Array)
+                    {
+                        continue;
+                    }
+
+                    foreach (var actor in actorProp.EnumerateArray())
+                    {
+                        if (actor.ValueKind != JsonValueKind.Object)
+                        {
+                            continue;
+                        }
+
+                        var name = "";
+                        if (TryGetStringProperty(actor, "name", out var parsedName))
+                        {
+                            name = parsedName.Trim();
+                        }
+
+                        var url = TryGetUrlFromActor(actor);
+                        var id = ExtractCelebrityId(url);
+
+                        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(id))
+                        {
+                            continue;
+                        }
+
+                        results.Add(new ActorEntry(name, id));
+                        if (results.Count >= count)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (results.Count >= count)
+                    {
+                        break;
+                    }
+                }
+
+                if (results.Count >= count)
+                {
+                    break;
+                }
+            }
+
+            return results
+                .GroupBy(a => a.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .Take(count)
+                .ToList();
+        }
+        catch
+        {
+            // If JSON-LD parsing fails, fall back to DOM scraping.
+            return new List<ActorEntry>();
+        }
+    }
+
+    private static IEnumerable<JsonElement> EnumerateObjects(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            yield return root;
+            yield break;
+        }
+
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in root.EnumerateArray())
+            {
+                if (el.ValueKind == JsonValueKind.Object)
+                {
+                    yield return el;
+                }
+            }
+        }
+    }
+
+    private static bool TryGetStringProperty(JsonElement element, string propertyName, out string value)
+    {
+        value = "";
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (!element.TryGetProperty(propertyName, out var prop))
+        {
+            return false;
+        }
+
+        if (prop.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = prop.GetString() ?? "";
+        return true;
+    }
+
+    private static string TryGetUrlFromActor(JsonElement actor)
+    {
+        // RT commonly uses "sameAs" for person profile URL.
+        if (TryGetStringProperty(actor, "sameAs", out var sameAs))
+        {
+            return sameAs;
+        }
+
+        if (actor.TryGetProperty("sameAs", out var sameAsProp) && sameAsProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in sameAsProp.EnumerateArray())
+            {
+                if (el.ValueKind == JsonValueKind.String)
+                {
+                    var s = el.GetString() ?? "";
+                    if (s.Contains("/celebrity/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return s;
+                    }
+                }
+            }
+        }
+
+        if (TryGetStringProperty(actor, "url", out var url))
+        {
+            return url;
+        }
+
+        return "";
     }
 
     private HtmlDocument LoadDocument(string url)

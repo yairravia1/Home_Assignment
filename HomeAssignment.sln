@@ -6,6 +6,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HomeAssignment.Api.IntegrationTests", "HomeAssignment.Api.IntegrationTests\HomeAssignment.Api.IntegrationTests.csproj", "{DCCB255F-62F8-4E6C-A215-B2BE2C43A42B}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{8E4E07C3-7D7B-405C-97BC-E131DDE8DEB3}"
+	ProjectSection(SolutionItems) = preProject
+		docker-compose.yml = docker-compose.yml
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HomeAssignment.Domain", "HomeAssignment\src\Domain\HomeAssignment.Domain.csproj", "{E0D80A39-04DA-4ADE-BA55-FF9E0D56EE03}"
 EndProject
