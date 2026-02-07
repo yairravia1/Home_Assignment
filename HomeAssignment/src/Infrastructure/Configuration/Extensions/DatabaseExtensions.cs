@@ -26,8 +26,8 @@ public static class DatabaseExtensions
         services.AddSingleton<IMongoClient>(_ => new MongoClient(mongoSettings.ConnectionString));
         
         services.AddScoped<MongoActorRepository>();
-        services.AddScoped<IActorRepository>(sp => sp.GetRequiredService<MongoActorRepository>());
-        services.AddScoped<IActorIngestionRepository>(sp => sp.GetRequiredService<MongoActorRepository>());
+        services.AddScoped<IActorRepository>(serviceProvider => serviceProvider.GetRequiredService<MongoActorRepository>());
+        services.AddScoped<IActorIngestionRepository>(serviceProvider => serviceProvider.GetRequiredService<MongoActorRepository>());
 
         return services;
     }

@@ -32,9 +32,9 @@ public static class ScraperExtensions
         }
         else
         {
-            services.AddSingleton<IActorSourceProvider>(sp =>
+            services.AddSingleton<IActorSourceProvider>(serviceProvider =>
             {
-                var settings = sp.GetRequiredService<ScraperSettings>();
+                var settings = serviceProvider.GetRequiredService<ScraperSettings>();
                 return new ImdbProvider(settings.TopChartUrl, settings.TopChartSimpleUrl);
             });
         }

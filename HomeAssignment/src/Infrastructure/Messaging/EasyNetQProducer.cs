@@ -17,16 +17,16 @@ public class EasyNetQProducer : IMessagePublisher
     }
 
     public async Task PublishEventAsync(
-        ActorChangedEvent actorEvent,
+        ActorChangedEvent actorChangedEvent,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            await _bus.PubSub.PublishAsync(actorEvent, cancellationToken);
+            await _bus.PubSub.PublishAsync(actorChangedEvent, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to publish actor event for ID {ActorId}", actorEvent.ActorId);
+            _logger.LogError(ex, "Failed to publish actor event for ID {ActorId}", actorChangedEvent.ActorId);
         }
     }
 

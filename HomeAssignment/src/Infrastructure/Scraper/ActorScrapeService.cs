@@ -5,25 +5,25 @@ namespace HomeAssignment.Infrastructure.Scraper;
 
 public class ActorScrapeService
 {
-    private readonly IActorSourceProvider _scraperService;
+    private readonly IActorSourceProvider _actorSourceProvider;
     private readonly RankGenerator _rankGenerator;
     private readonly string _sourceName;
     private readonly HashSet<string> _seenExternalIds = new(StringComparer.OrdinalIgnoreCase);
     private bool _rankExhaustedLogged;
 
     public ActorScrapeService(
-        IActorSourceProvider scraperService,
+        IActorSourceProvider actorSourceProvider,
         RankGenerator rankGenerator,
         string sourceName)
     {
-        _scraperService = scraperService;
+        _actorSourceProvider = actorSourceProvider;
         _rankGenerator = rankGenerator;
         _sourceName = sourceName;
     }
 
     public IEnumerable<MovieCast> ScrapeTopMoviesCast(int movieCount)
     {
-        var movies = _scraperService.GetTopMovies(movieCount).ToList();
+        var movies = _actorSourceProvider.GetTopMovies(movieCount).ToList();
         if (movies.Count == 0)
         {
             Console.WriteLine("No movies found on the Top Chart page.");
@@ -37,7 +37,7 @@ public class ActorScrapeService
             Console.WriteLine($"MOVIE: {movie.Title}");
             Console.WriteLine($"   -> Scraping Cast from: {movie.FullCreditsUrl}");
 
-            var actors = _scraperService.GetTopActors(movie.FullCreditsUrl, int.MaxValue);
+            var actors = _actorSourceProvider.GetTopActors(movie.FullCreditsUrl, int.MaxValue);
             if (actors.Count == 0)
             {
                 Console.WriteLine("   -> No actors found in cast section.");

@@ -13,12 +13,12 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
     private static readonly Uri RottenTomatoesBaseUri = new("https://www.rottentomatoes.com/");
 
     private readonly string _bestMoviesUrl;
-    private readonly HtmlWeb _web;
+    private readonly HtmlWeb _htmlWeb;
 
     public RottenTomatoesProvider(string bestMoviesUrl)
     {
         _bestMoviesUrl = bestMoviesUrl;
-        _web = new HtmlWeb
+        _htmlWeb = new HtmlWeb
         {
             // User agent to mimic a real browser (some sites behave differently without one).
             UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
@@ -32,13 +32,13 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
             return Enumerable.Empty<MovieInfo>();
         }
 
-        var doc = LoadDocument(_bestMoviesUrl);
+        var htmlDocument = LoadDocument(_bestMoviesUrl);
 
         // The editorial page renders a big table; each movie is usually linked with <a class="title" href="https://www.rottentomatoes.com/m/...">.
         var movieLinkNodes =
-            doc.DocumentNode.SelectNodes(
+            htmlDocument.DocumentNode.SelectNodes(
                 "//div[contains(@class,'articleContentBody')]//table//a[contains(@class,'title') and contains(@href,'rottentomatoes.com/m/')]")
-            ?? doc.DocumentNode.SelectNodes(
+            ?? htmlDocument.DocumentNode.SelectNodes(
                 "//div[contains(@class,'articleContentBody')]//a[contains(@href,'rottentomatoes.com/m/') and not(contains(@href,'/celebrity/'))]");
 
         if (movieLinkNodes == null || movieLinkNodes.Count == 0)
@@ -72,11 +72,11 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
             return new List<ActorEntry>();
         }
 
-        var doc = LoadDocument(fullCreditsUrl);
+        var htmlDocument = LoadDocument(fullCreditsUrl);
 
         // Rotten Tomatoes pages often render cast via embedded JSON (no plain <a href="/celebrity/..."> links in HTML).
         // Prefer parsing Schema.org JSON-LD which includes the cast list.
-        var ldJsonActors = TryGetActorsFromLdJson(doc, count);
+        var ldJsonActors = TryGetActorsFromLdJson(htmlDocument, count);
         if (ldJsonActors.Count > 0)
         {
             return ldJsonActors;
@@ -84,7 +84,7 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
 
         // Cast & Crew pages include both "Cast" and "Crew" entries. We want ACTORS only.
         // We start from links to "/celebrity/..." and keep only those whose nearby text includes "Actor".
-        var celebrityLinks = doc.DocumentNode.SelectNodes("//a[contains(@href,'/celebrity/')]");
+        var celebrityLinks = htmlDocument.DocumentNode.SelectNodes("//a[contains(@href,'/celebrity/')]");
         if (celebrityLinks == null || celebrityLinks.Count == 0)
         {
             return new List<ActorEntry>();
@@ -297,9 +297,9 @@ public sealed class RottenTomatoesProvider : IActorSourceProvider
 
     private HtmlDocument LoadDocument(string url)
     {
-        var doc = _web.Load(url);
+        var htmlDocument = _htmlWeb.Load(url);
         Thread.Sleep(1000); // Be polite to the server
-        return doc;
+        return htmlDocument;
     }
 
     private static string BuildCastAndCrewUrl(string movieUrl)

@@ -38,20 +38,20 @@ public class ActorCommandHandler : IHostedService
             onMessage: async (CreateActorCommand command) =>
             {
                 using var scope = _serviceProvider.CreateScope();
-                var repository = scope.ServiceProvider.GetRequiredService<IActorRepository>();
-                var publisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
+                var actorRepository = scope.ServiceProvider.GetRequiredService<IActorRepository>();
+                var messagePublisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
 
                 try
                 {
-                    var actor = new Actor
+                    var newActor = new Actor
                     {
                         Name = command.Name,
                         Rank = command.Rank,
                         Source = command.Source
                     };
 
-                    var addResult = await repository.AddActorAsync(actor);
-                    if (addResult.DuplicateRank)
+                    var addActorResult = await actorRepository.AddActorAsync(newActor);
+                    if (addActorResult.DuplicateRank)
                     {
                         _logger.LogWarning(
                             "Create command rejected: Duplicate rank {Rank}. CorrelationId={CorrelationId}",
@@ -60,22 +60,22 @@ public class ActorCommandHandler : IHostedService
                         return;
                     }
 
-                    if (addResult.Actor == null)
+                    if (addActorResult.Actor == null)
                     {
                         return;
                     }
 
-                    var evt = new ActorChangedEvent(
-                        addResult.Actor.Id,
+                    var actorChangedEvent = new ActorChangedEvent(
+                        addActorResult.Actor.Id,
                         ActorChangeType.Created,
                         new ActorSnapshot(
-                            addResult.Actor.Id,
-                            addResult.Actor.Name,
-                            addResult.Actor.Rank,
-                            addResult.Actor.Source),
+                            addActorResult.Actor.Id,
+                            addActorResult.Actor.Name,
+                            addActorResult.Actor.Rank,
+                            addActorResult.Actor.Source),
                         DateTimeOffset.UtcNow);
 
-                    await publisher.PublishEventAsync(evt, cancellationToken);
+                    await messagePublisher.PublishEventAsync(actorChangedEvent, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -94,33 +94,33 @@ public class ActorCommandHandler : IHostedService
             onMessage: async (UpdateActorCommand command) =>
             {
                 using var scope = _serviceProvider.CreateScope();
-                var repository = scope.ServiceProvider.GetRequiredService<IActorRepository>();
-                var publisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
+                var actorRepository = scope.ServiceProvider.GetRequiredService<IActorRepository>();
+                var messagePublisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
 
                 try
                 {
-                    var update = new ActorUpdate(
+                    var actorUpdate = new ActorUpdate(
                         Name: command.Name,
                         Rank: command.Rank,
                         Source: command.Source);
 
-                    var updateResult = await repository.UpdateActorAsync(command.ActorId, update);
-                    if (updateResult.NotFound || updateResult.DuplicateRank || updateResult.Actor == null)
+                    var updateActorResult = await actorRepository.UpdateActorAsync(command.ActorId, actorUpdate);
+                    if (updateActorResult.NotFound || updateActorResult.DuplicateRank || updateActorResult.Actor == null)
                     {
                         return;
                     }
 
-                    var evt = new ActorChangedEvent(
-                        updateResult.Actor.Id,
+                    var actorChangedEvent = new ActorChangedEvent(
+                        updateActorResult.Actor.Id,
                         ActorChangeType.Updated,
                         new ActorSnapshot(
-                            updateResult.Actor.Id,
-                            updateResult.Actor.Name,
-                            updateResult.Actor.Rank,
-                            updateResult.Actor.Source),
+                            updateActorResult.Actor.Id,
+                            updateActorResult.Actor.Name,
+                            updateActorResult.Actor.Rank,
+                            updateActorResult.Actor.Source),
                         DateTimeOffset.UtcNow);
 
-                    await publisher.PublishEventAsync(evt, cancellationToken);
+                    await messagePublisher.PublishEventAsync(actorChangedEvent, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -140,18 +140,18 @@ public class ActorCommandHandler : IHostedService
             onMessage: async (DeleteActorCommand command) =>
             {
                 using var scope = _serviceProvider.CreateScope();
-                var repository = scope.ServiceProvider.GetRequiredService<IActorRepository>();
-                var publisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
+                var actorRepository = scope.ServiceProvider.GetRequiredService<IActorRepository>();
+                var messagePublisher = scope.ServiceProvider.GetRequiredService<IMessagePublisher>();
 
                 try
                 {
-                    var deletedActor = await repository.DeleteActorAsync(command.ActorId);
+                    var deletedActor = await actorRepository.DeleteActorAsync(command.ActorId);
                     if (deletedActor == null)
                     {
                         return;
                     }
 
-                    var evt = new ActorChangedEvent(
+                    var actorChangedEvent = new ActorChangedEvent(
                         deletedActor.Id,
                         ActorChangeType.Deleted,
                         new ActorSnapshot(
@@ -161,7 +161,7 @@ public class ActorCommandHandler : IHostedService
                             deletedActor.Source),
                         DateTimeOffset.UtcNow);
 
-                    await publisher.PublishEventAsync(evt, cancellationToken);
+                    await messagePublisher.PublishEventAsync(actorChangedEvent, cancellationToken);
                 }
                 catch (Exception ex)
                 {

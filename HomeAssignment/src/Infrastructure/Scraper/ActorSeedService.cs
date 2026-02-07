@@ -9,15 +9,15 @@ public class ActorSeedService
 {
     private readonly IActorIngestionRepository _repository;
     private readonly ScraperSettings _settings;
-    private readonly IActorSourceProvider _scraperService;
+    private readonly IActorSourceProvider _actorSourceProvider;
 
     public ActorSeedService(
         IActorIngestionRepository repository,
-        IActorSourceProvider scraperService,
+        IActorSourceProvider actorSourceProvider,
         ScraperSettings settings)
     {
         _repository = repository;
-        _scraperService = scraperService;
+        _actorSourceProvider = actorSourceProvider;
         _settings = settings;
     }
 
@@ -31,9 +31,9 @@ public class ActorSeedService
 
         var usedRanks = _repository.GetAssignedRanks(_settings.SourceName);
         var rankGenerator = new RankGenerator(usedRanks, _settings.MaxRank);
-        var scrapeService = new ActorScrapeService(_scraperService, rankGenerator, _settings.SourceName);
+        var actorScrapeService = new ActorScrapeService(_actorSourceProvider, rankGenerator, _settings.SourceName);
 
-        foreach (var movieCast in scrapeService.ScrapeTopMoviesCast(_settings.MovieCount))
+        foreach (var movieCast in actorScrapeService.ScrapeTopMoviesCast(_settings.MovieCount))
         {
             if (movieCast.Actors.Count == 0)
             {

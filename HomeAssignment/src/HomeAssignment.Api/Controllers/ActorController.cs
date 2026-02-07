@@ -29,23 +29,23 @@ public class ActorController : ControllerBase
     [HttpGet]
     [Authorize(Policy = "UserAccess")]
     public async Task<IActionResult> GetAll(
-        [FromQuery] ActorQueryObject query,
+        [FromQuery] ActorQueryObject queryObject,
         [FromHeader] int? skip,
         [FromHeader] int? take)
     {
         var actualSkip = Math.Max(0, skip.GetValueOrDefault(DefaultSkip));
-        var rawTake = take.GetValueOrDefault(DefaultTake);
-        var actualTake = rawTake <= 0 ? DefaultTake : Math.Min(rawTake, MaxTake);
+        var requestedTake = take.GetValueOrDefault(DefaultTake);
+        var actualTake = requestedTake <= 0 ? DefaultTake : Math.Min(requestedTake, MaxTake);
 
-        var domainQuery = new ActorQuery
+        var actorQuery = new ActorQuery
         {
-            ActorName = query.ActorName,
-            MinRank = query.MinRank,
-            MaxRank = query.MaxRank,
-            Provider = query.Provider
+            ActorName = queryObject.ActorName,
+            MinRank = queryObject.MinRank,
+            MaxRank = queryObject.MaxRank,
+            Provider = queryObject.Provider
         };
 
-        var actorList = await _actorRepository.GetAllActorsAsync(domainQuery, actualSkip, actualTake);
+        var actorList = await _actorRepository.GetAllActorsAsync(actorQuery, actualSkip, actualTake);
         var actorSummaries = actorList.Select(actorItem => actorItem.ToActorSummaryDto());
 
         return Ok(actorSummaries);
@@ -67,13 +67,13 @@ public class ActorController : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = "AdminAccess")]
-    public async Task<IActionResult> Create([FromBody] Dtos.Actor.CreateActorRequestDto actorDto)
+    public async Task<IActionResult> Create([FromBody] Dtos.Actor.CreateActorRequestDto request)
     {
         var correlationId = Guid.NewGuid().ToString();
         var command = new CreateActorCommand(
-            actorDto.Name,
-            actorDto.Rank,
-            actorDto.Source,
+            request.Name,
+            request.Rank,
+            request.Source,
             correlationId);
 
         await _messagePublisher.PublishCommandAsync(command);

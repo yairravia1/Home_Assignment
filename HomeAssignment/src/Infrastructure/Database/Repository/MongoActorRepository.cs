@@ -148,7 +148,7 @@ public class MongoActorRepository : IActorRepository, IActorIngestionRepository
             return new UpdateActorResult { NotFound = true };
         }
 
-        var duplicateRank = await IsRankInUseAsync(update.Source, update.Rank, id);
+        var duplicateRank = await IsRankInUseAsync(update.Source, update.Rank, excludedActorId: id);
         if (duplicateRank)
         {
             return new UpdateActorResult { DuplicateRank = true };
@@ -222,7 +222,7 @@ public class MongoActorRepository : IActorRepository, IActorIngestionRepository
             return new SaveResult(0, 0, 0);
         }
 
-        var documents = actorList
+        var actorDocuments = actorList
             .Where(actor => !string.IsNullOrWhiteSpace(actor.ExternalId))
             .GroupBy(actor => actor.ExternalId, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
@@ -242,51 +242,58 @@ public class MongoActorRepository : IActorRepository, IActorIngestionRepository
             .ToList();
 
         var existingBySource = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var source in documents.Select(d => d.Source).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var providerSource in actorDocuments
+                     .Select(actorDocument => actorDocument.Source)
+                     .Where(source => !string.IsNullOrWhiteSpace(source))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var idsForSource = documents
-                .Where(d => d.Source.Equals(source, StringComparison.OrdinalIgnoreCase))
-                .Select(d => d.ExternalId)
+            var externalIdsForSource = actorDocuments
+                .Where(actorDocument => actorDocument.Source.Equals(providerSource, StringComparison.OrdinalIgnoreCase))
+                .Select(actorDocument => actorDocument.ExternalId)
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .Select(id => id!)
                 .ToList();
 
-            foreach (var existingId in GetExistingExternalIds(source, idsForSource))
+            foreach (var existingId in GetExistingExternalIds(providerSource, externalIdsForSource))
             {
-                existingBySource.Add($"{source}::{existingId}");
+                existingBySource.Add($"{providerSource}::{existingId}");
             }
         }
 
-        var newDocuments = documents.Where(doc => !existingBySource.Contains($"{doc.Source}::{doc.ExternalId}")).ToList();
-        var inserted = InsertDocuments(newDocuments);
+        var actorsToInsert = actorDocuments
+            .Where(actorDocument => !existingBySource.Contains($"{actorDocument.Source}::{actorDocument.ExternalId}"))
+            .ToList();
+        var insertedCount = InsertDocuments(actorsToInsert);
 
         if (behavior == SaveBehavior.SkipExisting)
         {
-            return new SaveResult(documents.Count, inserted, 0);
+            return new SaveResult(actorDocuments.Count, insertedCount, 0);
         }
 
-        var existingDocuments = documents.Where(doc => existingBySource.Contains($"{doc.Source}::{doc.ExternalId}")).ToList();
-        var modified = UpdateExistingDocuments(existingDocuments);
-        return new SaveResult(documents.Count, inserted, modified);
+        var actorsToUpdate = actorDocuments
+            .Where(actorDocument => existingBySource.Contains($"{actorDocument.Source}::{actorDocument.ExternalId}"))
+            .ToList();
+        var modifiedCount = UpdateExistingDocuments(actorsToUpdate);
+        return new SaveResult(actorDocuments.Count, insertedCount, modifiedCount);
     }
 
-    private int UpdateExistingDocuments(List<Actor> documents)
+    private int UpdateExistingDocuments(List<Actor> actorsToUpdate)
     {
-        if (documents.Count == 0)
+        if (actorsToUpdate.Count == 0)
         {
             return 0;
         }
 
-        var updates = documents.Select(doc =>
+        var updates = actorsToUpdate.Select(actorDocument =>
         {
             var filter = Builders<Actor>.Filter.And(
-                Builders<Actor>.Filter.Eq(actor => actor.Source, doc.Source),
-                Builders<Actor>.Filter.Eq(actor => actor.ExternalId, doc.ExternalId));
+                Builders<Actor>.Filter.Eq(actor => actor.Source, actorDocument.Source),
+                Builders<Actor>.Filter.Eq(actor => actor.ExternalId, actorDocument.ExternalId));
 
             var update = Builders<Actor>.Update
-                .Set(actor => actor.Name, doc.Name)
-                .Set(actor => actor.Rank, doc.Rank)
-                .Set(actor => actor.Source, doc.Source);
+                .Set(actor => actor.Name, actorDocument.Name)
+                .Set(actor => actor.Rank, actorDocument.Rank)
+                .Set(actor => actor.Source, actorDocument.Source);
 
             return new UpdateOneModel<Actor>(filter, update);
         }).ToList();
@@ -295,30 +302,30 @@ public class MongoActorRepository : IActorRepository, IActorIngestionRepository
         return result?.ModifiedCount != null ? (int)result.ModifiedCount : 0;
     }
 
-    private int InsertDocuments(List<Actor> documents)
+    private int InsertDocuments(List<Actor> actorsToInsert)
     {
-        if (documents.Count == 0)
+        if (actorsToInsert.Count == 0)
         {
             return 0;
         }
 
-        var ids = GetNextIds(documents.Count);
-        for (var i = 0; i < documents.Count; i++)
+        var reservedIds = GetNextIds(actorsToInsert.Count);
+        for (var i = 0; i < actorsToInsert.Count; i++)
         {
-            documents[i].Id = ids[i];
+            actorsToInsert[i].Id = reservedIds[i];
         }
 
         try
         {
-            _actors.InsertMany(documents);
-            return documents.Count;
+            _actors.InsertMany(actorsToInsert);
+            return actorsToInsert.Count;
         }
         catch (MongoConnectionException ex)
         {
             Console.WriteLine($"MongoDB connection dropped: {ex.Message}. Retrying...");
             Thread.Sleep(1000);
-            _actors.InsertMany(documents);
-            return documents.Count;
+            _actors.InsertMany(actorsToInsert);
+            return actorsToInsert.Count;
         }
     }
 
@@ -372,12 +379,12 @@ public class MongoActorRepository : IActorRepository, IActorIngestionRepository
             : filterBuilder.And(filters);
     }
 
-    private async Task<bool> IsRankInUseAsync(string source, int rank, int excludedId)
+    private async Task<bool> IsRankInUseAsync(string source, int rank, int excludedActorId)
     {
         var filterBuilder = Builders<Actor>.Filter;
         var sourceFilter = filterBuilder.Eq(actorDocument => actorDocument.Source, source);
         var rankFilter = filterBuilder.Eq(actorDocument => actorDocument.Rank, rank);
-        var excludeFilter = filterBuilder.Ne(actorDocument => actorDocument.Id, excludedId);
+        var excludeFilter = filterBuilder.Ne(actorDocument => actorDocument.Id, excludedActorId);
         var combinedFilter = filterBuilder.And(sourceFilter, rankFilter, excludeFilter);
 
         var count = await _actors.CountDocumentsAsync(combinedFilter);

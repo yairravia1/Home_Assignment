@@ -12,14 +12,14 @@ public sealed class ImdbProvider : IActorSourceProvider
     private readonly string _topChartUrl;
     private readonly string _topChartSimpleUrl;
     private readonly Uri _baseUri;
-    private readonly HtmlWeb _web;
+    private readonly HtmlWeb _htmlWeb;
 
     public ImdbProvider(string topChartUrl, string topChartSimpleUrl)
     {
         _topChartUrl = topChartUrl;
         _topChartSimpleUrl = topChartSimpleUrl;
         _baseUri = new Uri(topChartUrl);
-        _web = new HtmlWeb
+        _htmlWeb = new HtmlWeb
         {
             // User agent to mimic a real browser
             UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
@@ -86,9 +86,9 @@ public sealed class ImdbProvider : IActorSourceProvider
 
     private HtmlDocument LoadDocument(string url)
     {
-        var doc = _web.Load(url);
+        var htmlDocument = _htmlWeb.Load(url);
         Thread.Sleep(1000); // Be polite to the server
-        return doc;
+        return htmlDocument;
     }
 
     private string BuildAbsoluteUrl(string relativeUrl)
