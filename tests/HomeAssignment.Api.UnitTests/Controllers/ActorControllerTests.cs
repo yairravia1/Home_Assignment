@@ -122,7 +122,8 @@ public class ActorControllerTests
         // IMPROVEMENT: Use Reflection or dynamic to check the Anonymous Object returned
         // The controller returns: new { correlationId, message }
         var responseValue = acceptedResult.Value;
-        var correlationIdProp = responseValue.GetType().GetProperty("correlationId");
+        Assert.NotNull(responseValue);
+        var correlationIdProp = responseValue!.GetType().GetProperty("correlationId");
         
         Assert.NotNull(correlationIdProp);
         var correlationIdValue = correlationIdProp.GetValue(responseValue) as string;

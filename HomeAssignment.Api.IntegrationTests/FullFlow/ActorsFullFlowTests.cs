@@ -26,8 +26,8 @@ namespace HomeAssignment.Api.IntegrationTests.FullFlow;
 /// </summary>
 public sealed class ActorsFullFlowTests : IAsyncLifetime
 {
-    private readonly MongoDbContainer _mongo = new MongoDbBuilder().Build();
-    private readonly RabbitMqContainer _rabbit = new RabbitMqBuilder().Build();
+    private readonly MongoDbContainer _mongo = new MongoDbBuilder("mongo:7").Build();
+    private readonly RabbitMqContainer _rabbit = new RabbitMqBuilder("rabbitmq:3-management").Build();
 
     private FullFlowWebApplicationFactory? _factory;
     private HttpClient? _client;
@@ -67,7 +67,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
     public async Task CreateActor_FullFlow_PersistsToMongo_PublishesEvent_AndIsReadableViaGetAll()
     {
         // Arrange
-        EnsureInitialized();
+        var (factory, client) = GetInitialized();
         // Keep under 20 chars due to CreateActorRequestDto validation.
         var uniqueName = $"Momoa-{Guid.NewGuid():N}"[..14];
         var uniqueRank = await GetUnusedRankAsync(
@@ -85,7 +85,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
         };
 
         // Act (HTTP write -> queue)
-        var postResponse = await _client!.PostAsJsonAsync("/api/actors", request);
+        var postResponse = await client.PostAsJsonAsync("/api/actors", request);
 
         // Immediately accepted (async processing)
         Assert.Equal(HttpStatusCode.Accepted, postResponse.StatusCode);
@@ -105,7 +105,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
         Assert.Equal(request.Source, insertedActor.Source);
 
         // Assert #2: an event was published (queue -> event)
-        var eventCollector = _factory.Services.GetRequiredService<ActorChangedEventCollector>();
+        var eventCollector = factory.Services.GetRequiredService<ActorChangedEventCollector>();
         var createdEvent = await eventCollector.WaitForFirstCreatedAsync(TimeSpan.FromSeconds(15));
         Assert.Equal(ActorChangeType.Created, createdEvent.ChangeType);
         Assert.Equal(request.Name, createdEvent.Actor.Name);
@@ -114,7 +114,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
 
         
         // Assert #3: the API can read it back (HTTP read -> DB)
-        var getResponse = await _client.GetAsync("/api/actors");
+        var getResponse = await client.GetAsync("/api/actors");
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
 
         var dtos = await getResponse.Content.ReadFromJsonAsync<List<ActorSummaryDto>>();
@@ -126,7 +126,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
     public async Task CreateActor_DuplicateRank_DoesNotInsertSecondActor()
     {
         // Arrange
-        EnsureInitialized();
+        var (_, client) = GetInitialized();
         var uniqueRank = await GetUnusedRankAsync(
             mongoConnectionString: _mongo.GetConnectionString(),
             databaseName: "imdb",
@@ -149,7 +149,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
         };
 
         // Act
-        var firstResponse = await _client!.PostAsJsonAsync("/api/actors", firstRequest);
+        var firstResponse = await client.PostAsJsonAsync("/api/actors", firstRequest);
         Assert.Equal(HttpStatusCode.Accepted, firstResponse.StatusCode);
 
         var firstActor = await WaitForActorInMongoAsync(
@@ -160,7 +160,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
             timeout: TimeSpan.FromSeconds(15));
         Assert.NotNull(firstActor);
 
-        var secondResponse = await _client.PostAsJsonAsync("/api/actors", secondRequest);
+        var secondResponse = await client.PostAsJsonAsync("/api/actors", secondRequest);
         Assert.Equal(HttpStatusCode.Accepted, secondResponse.StatusCode);
 
         // Assert: rank remains unique in the database.
@@ -178,7 +178,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
     public async Task UpdateActor_NotFound_DoesNotModifyExistingActor()
     {
         // Arrange
-        EnsureInitialized();
+        var (_, client) = GetInitialized();
         var uniqueRank = await GetUnusedRankAsync(
             mongoConnectionString: _mongo.GetConnectionString(),
             databaseName: "imdb",
@@ -193,7 +193,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
             Source = "IMDb"
         };
 
-        var createResponse = await _client!.PostAsJsonAsync("/api/actors", createRequest);
+        var createResponse = await client.PostAsJsonAsync("/api/actors", createRequest);
         Assert.Equal(HttpStatusCode.Accepted, createResponse.StatusCode);
 
         var insertedActor = await WaitForActorInMongoAsync(
@@ -213,7 +213,7 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
         };
 
         // Act
-        var updateResponse = await _client.PutAsJsonAsync($"/api/actors/{missingId}", updateRequest);
+        var updateResponse = await client.PutAsJsonAsync($"/api/actors/{missingId}", updateRequest);
         Assert.Equal(HttpStatusCode.Accepted, updateResponse.StatusCode);
 
         // Assert: original actor stays unchanged.
@@ -228,12 +228,14 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
         Assert.Equal(createRequest.Name, refreshed!.Name);
     }
 
-    private void EnsureInitialized()
+    private (FullFlowWebApplicationFactory Factory, HttpClient Client) GetInitialized()
     {
-        if (_factory == null || _client == null)
+        if (_factory is null || _client is null)
         {
             throw new InvalidOperationException("Test was not initialized. InitializeAsync must run first.");
         }
+
+        return (_factory, _client);
     }
 
     private static async Task<Actor?> WaitForActorInMongoAsync(

@@ -1,5 +1,5 @@
+using HomeAssignment.Infrastructure.Configuration.Settings.ScraperSettings;
 using HomeAssignment.Infrastructure.Scraper;
-using HomeAssignment.Infrastructure.Scraper.Configuration;
 using HomeAssignment.Infrastructure.Scraper.Providers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

@@ -1,4 +1,4 @@
-namespace HomeAssignment.Infrastructure.Scraper.Configuration;
+namespace HomeAssignment.Infrastructure.Configuration.Settings.ScraperSettings;
 
 public record ScraperSettings(
     string Provider,

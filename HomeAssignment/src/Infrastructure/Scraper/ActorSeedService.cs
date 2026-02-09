@@ -1,6 +1,6 @@
 using HomeAssignment.Domain.Interfaces;
 using HomeAssignment.Domain.Enums;
-using HomeAssignment.Infrastructure.Scraper.Configuration;
+using HomeAssignment.Infrastructure.Configuration.Settings.ScraperSettings;
 using HomeAssignment.Infrastructure.Scraper.Providers;
 
 namespace HomeAssignment.Infrastructure.Scraper;
