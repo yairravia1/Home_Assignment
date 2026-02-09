@@ -27,7 +27,12 @@ namespace HomeAssignment.Api.IntegrationTests.FullFlow;
 public sealed class ActorsFullFlowTests : IAsyncLifetime
 {
     private readonly MongoDbContainer _mongo = new MongoDbBuilder("mongo:7").Build();
-    private readonly RabbitMqContainer _rabbit = new RabbitMqBuilder("rabbitmq:3-management").Build();
+    private readonly RabbitMqContainer _rabbit = new RabbitMqBuilder("rabbitmq:3-management")
+        // RabbitMQ often restricts the built-in 'guest' user to loopback connections only.
+        // Using a dedicated user avoids auth failures when connecting through Docker port mappings in CI.
+        .WithUsername("test")
+        .WithPassword("test")
+        .Build();
 
     private FullFlowWebApplicationFactory? _factory;
     private HttpClient? _client;
