@@ -11,6 +11,8 @@ public class ActorCommandHandler : IHostedService
     private readonly IBus _bus;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ActorCommandHandler> _logger;
+    private static readonly TimeSpan SubscribeTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
 
     public ActorCommandHandler(
         IBus bus,
@@ -24,12 +26,69 @@ public class ActorCommandHandler : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        await SubscribeToCreateCommands(cancellationToken);
-        await SubscribeToUpdateCommands(cancellationToken);
-        await SubscribeToDeleteCommands(cancellationToken);
+        // RabbitMQ may still be warming up at host start (especially in CI/Testcontainers).
+        // If we fail fast here, the entire host fails to start and integration tests can't boot.
+        // Instead, retry subscription until success (or host startup is cancelled).
+        await SubscribeWithRetryAsync(
+            subscriptionName: "CreateActorCommand",
+            subscribe: () => SubscribeToCreateCommands(CancellationToken.None),
+            cancellationToken);
+
+        await SubscribeWithRetryAsync(
+            subscriptionName: "UpdateActorCommand",
+            subscribe: () => SubscribeToUpdateCommands(CancellationToken.None),
+            cancellationToken);
+
+        await SubscribeWithRetryAsync(
+            subscriptionName: "DeleteActorCommand",
+            subscribe: () => SubscribeToDeleteCommands(CancellationToken.None),
+            cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private async Task SubscribeWithRetryAsync(
+        string subscriptionName,
+        Func<Task> subscribe,
+        CancellationToken cancellationToken)
+    {
+        var attempt = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            attempt++;
+            try
+            {
+                await RunWithTimeoutAsync(subscribe, SubscribeTimeout, cancellationToken);
+                _logger.LogInformation("Subscribed to {SubscriptionName}", subscriptionName);
+                return;
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex,
+                    "Failed subscribing to {SubscriptionName} (attempt {Attempt}). Retrying in {Delay}...",
+                    subscriptionName,
+                    attempt,
+                    RetryDelay);
+
+                await Task.Delay(RetryDelay, cancellationToken);
+            }
+        }
+    }
+
+    private static async Task RunWithTimeoutAsync(
+        Func<Task> action,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var actionTask = action();
+        var completed = await Task.WhenAny(actionTask, Task.Delay(timeout, cancellationToken));
+        if (completed != actionTask)
+        {
+            throw new TimeoutException($"Operation timed out after {timeout}.");
+        }
+
+        await actionTask;
+    }
 
     private async Task SubscribeToCreateCommands(CancellationToken cancellationToken)
     {
