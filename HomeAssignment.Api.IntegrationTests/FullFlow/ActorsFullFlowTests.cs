@@ -328,8 +328,8 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
     private static string NormalizeEasyNetQConnectionString(string rabbitMqContainerConnectionString)
     {
         // Testcontainers RabbitMQ module returns an AMQP URI (e.g. amqp://guest:guest@localhost:32768).
-        // EasyNetQ can work with AMQP URIs, but its most common format is:
-        // "host=localhost:32768;username=guest;password=guest".
+        // EasyNetQ expects a key-value connection string:
+        // "host=127.0.0.1;port=32768;username=guest;password=guest;virtualHost=/;timeout=60".
         if (!Uri.TryCreate(rabbitMqContainerConnectionString, UriKind.Absolute, out var uri))
         {
             return rabbitMqContainerConnectionString;
@@ -351,7 +351,19 @@ public sealed class ActorsFullFlowTests : IAsyncLifetime
             }
         }
 
-        return $"host={uri.Host}:{uri.Port};username={username};password={password}";
+        // In CI, "localhost" may resolve to IPv6 (::1) first. Use an IPv4 loopback to avoid that class of failures.
+        var host = string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) ? "127.0.0.1" : uri.Host;
+
+        // URI path maps to RabbitMQ virtual host. "/" is the default vhost.
+        var vhost = "/";
+        var decodedPath = Uri.UnescapeDataString(uri.AbsolutePath ?? "");
+        if (!string.IsNullOrWhiteSpace(decodedPath) && decodedPath != "/")
+        {
+            vhost = decodedPath.TrimStart('/');
+        }
+
+        // Increase EasyNetQ timeout to tolerate slow startups in CI.
+        return $"host={host};port={uri.Port};username={username};password={password};virtualHost={vhost};timeout=60";
     }
 }
 
