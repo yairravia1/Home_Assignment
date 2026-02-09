@@ -13,6 +13,7 @@ public class ActorCommandHandler : IHostedService
     private readonly ILogger<ActorCommandHandler> _logger;
     private static readonly TimeSpan SubscribeTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaxStartupRetryWindow = TimeSpan.FromSeconds(60);
 
     public ActorCommandHandler(
         IBus bus,
@@ -28,20 +29,20 @@ public class ActorCommandHandler : IHostedService
     {
         // RabbitMQ may still be warming up at host start (especially in CI/Testcontainers).
         // If we fail fast here, the entire host fails to start and integration tests can't boot.
-        // Instead, retry subscription until success (or host startup is cancelled).
+        // Instead, retry subscription until success, but only up to a bounded window.
         await SubscribeWithRetryAsync(
             subscriptionName: "CreateActorCommand",
-            subscribe: () => SubscribeToCreateCommands(CancellationToken.None),
+            subscribe: SubscribeToCreateCommands,
             cancellationToken);
 
         await SubscribeWithRetryAsync(
             subscriptionName: "UpdateActorCommand",
-            subscribe: () => SubscribeToUpdateCommands(CancellationToken.None),
+            subscribe: SubscribeToUpdateCommands,
             cancellationToken);
 
         await SubscribeWithRetryAsync(
             subscriptionName: "DeleteActorCommand",
-            subscribe: () => SubscribeToDeleteCommands(CancellationToken.None),
+            subscribe: SubscribeToDeleteCommands,
             cancellationToken);
     }
 
@@ -49,16 +50,28 @@ public class ActorCommandHandler : IHostedService
 
     private async Task SubscribeWithRetryAsync(
         string subscriptionName,
-        Func<Task> subscribe,
+        Func<CancellationToken, Task> subscribe,
         CancellationToken cancellationToken)
     {
         var attempt = 0;
+        var deadline = DateTimeOffset.UtcNow.Add(MaxStartupRetryWindow);
+
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                throw new TimeoutException(
+                    $"Timed out after {MaxStartupRetryWindow} while subscribing to {subscriptionName}. " +
+                    "RabbitMQ may be unreachable or misconfigured.");
+            }
+
             attempt++;
             try
             {
-                await RunWithTimeoutAsync(subscribe, SubscribeTimeout, cancellationToken);
+                await RunWithTimeoutAsync(
+                    action: subscribe,
+                    timeout: SubscribeTimeout,
+                    cancellationToken: cancellationToken);
                 _logger.LogInformation("Subscribed to {SubscriptionName}", subscriptionName);
                 return;
             }
@@ -76,18 +89,22 @@ public class ActorCommandHandler : IHostedService
     }
 
     private static async Task RunWithTimeoutAsync(
-        Func<Task> action,
+        Func<CancellationToken, Task> action,
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        var actionTask = action();
-        var completed = await Task.WhenAny(actionTask, Task.Delay(timeout, cancellationToken));
-        if (completed != actionTask)
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+
+        try
         {
+            await action(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // This was our timeout (not overall host cancellation).
             throw new TimeoutException($"Operation timed out after {timeout}.");
         }
-
-        await actionTask;
     }
 
     private async Task SubscribeToCreateCommands(CancellationToken cancellationToken)
